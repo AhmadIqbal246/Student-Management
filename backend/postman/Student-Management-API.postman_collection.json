@@ -1,0 +1,376 @@
+{
+  "info": {
+    "name": "Student Management API",
+    "description": "Tests every endpoint of the Student Management System.\n\n**Authentication uses httpOnly cookies.** Signup/Login set two cookies:\n- `access_token`: JWT, 15 minutes, sent to `/api/*`\n- `refresh_token`: random token, 7 days, sent only to `/api/auth/*`\n\nPostman's cookie jar stores and sends them automatically, so there's no Authorization header to set. Requests marked *(no cookies)* turn the jar off to test unauthenticated access.\n\n**How to use:** start the backend (`npm run dev`), import this collection, then open the collection, click **Run**, and run it top to bottom. Each request includes test scripts that check its status code and response.\n\nUnique emails are generated per run, so the collection can be run repeatedly. The 'Reuse old refresh token' request waits `reuseWaitMs` (6 s) so the reuse happens after the 5-second grace period.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "http://localhost:5000/api" },
+    { "key": "userEmail", "value": "" },
+    { "key": "userPassword", "value": "Password123" },
+    { "key": "studentEmail", "value": "" },
+    { "key": "studentId", "value": "" },
+    { "key": "oldRefreshToken", "value": "" },
+    { "key": "reuseWaitMs", "value": "6000" }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "item": [
+        {
+          "name": "Health check",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));"
+          ] } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/health" }
+        }
+      ]
+    },
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Signup",
+          "event": [
+            { "listen": "prerequest", "script": { "type": "text/javascript", "exec": [
+              "pm.collectionVariables.set('userEmail', `user${Date.now()}@example.com`);"
+            ] } },
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "const body = pm.response.json();",
+              "pm.test('Returns user without password', () => {",
+              "  pm.expect(body.data.user.email).to.eql(pm.collectionVariables.get('userEmail'));",
+              "  pm.expect(body.data.user).to.not.have.property('password_hash');",
+              "});",
+              "pm.test('Tokens are NOT in the JSON body', () => pm.expect(body.data).to.not.have.any.keys('token', 'accessToken', 'refreshToken'));",
+              "pm.test('Sets access_token and refresh_token cookies', () => {",
+              "  pm.expect(pm.cookies.has('access_token')).to.be.true;",
+              "  pm.expect(pm.cookies.has('refresh_token')).to.be.true;",
+              "});",
+              "pm.test('Cookies are httpOnly', () => {",
+              "  const setCookies = pm.response.headers.filter((h) => h.key.toLowerCase() === 'set-cookie');",
+              "  pm.expect(setCookies.length).to.eql(2);",
+              "  setCookies.forEach((h) => pm.expect(h.value).to.include('HttpOnly'));",
+              "});"
+            ] } }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Test User\",\n  \"email\": \"{{userEmail}}\",\n  \"password\": \"{{userPassword}}\"\n}" },
+            "url": "{{baseUrl}}/auth/signup"
+          }
+        },
+        {
+          "name": "Signup - duplicate email (409)",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('409 Conflict', () => pm.response.to.have.status(409));"
+          ] } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Test User\",\n  \"email\": \"{{userEmail}}\",\n  \"password\": \"{{userPassword}}\"\n}" },
+            "url": "{{baseUrl}}/auth/signup"
+          }
+        },
+        {
+          "name": "Signup - validation errors (400)",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+            "pm.test('Lists field errors', () => pm.expect(pm.response.json().errors).to.have.lengthOf(3));"
+          ] } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"\",\n  \"email\": \"not-an-email\",\n  \"password\": \"123\"\n}" },
+            "url": "{{baseUrl}}/auth/signup"
+          }
+        },
+        {
+          "name": "Login - wrong password (401)",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"
+          ] } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{userEmail}}\",\n  \"password\": \"WrongPassword1\"\n}" },
+            "url": "{{baseUrl}}/auth/login"
+          }
+        },
+        {
+          "name": "Login",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "pm.test('Returns the user', () => pm.expect(pm.response.json().data.user.email).to.eql(pm.collectionVariables.get('userEmail')));",
+            "pm.test('Sets both cookies', () => {",
+            "  pm.expect(pm.cookies.has('access_token')).to.be.true;",
+            "  pm.expect(pm.cookies.has('refresh_token')).to.be.true;",
+            "});",
+            "// Saved to prove later that a refresh token can only be used once.",
+            "pm.collectionVariables.set('oldRefreshToken', pm.cookies.get('refresh_token'));"
+          ] } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{userEmail}}\",\n  \"password\": \"{{userPassword}}\"\n}" },
+            "url": "{{baseUrl}}/auth/login"
+          }
+        },
+        {
+          "name": "Get current user (me)",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "pm.test('Returns logged-in user', () => pm.expect(pm.response.json().data.user.email).to.eql(pm.collectionVariables.get('userEmail')));"
+          ] } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/auth/me" }
+        },
+        {
+          "name": "Get current user - no cookies (401)",
+          "protocolProfileBehavior": { "disableCookies": true },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"
+          ] } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/auth/me" }
+        }
+      ]
+    },
+    {
+      "name": "Students",
+      "item": [
+        {
+          "name": "Get all students - no cookies (401)",
+          "protocolProfileBehavior": { "disableCookies": true },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"
+          ] } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/students" }
+        },
+        {
+          "name": "Create student",
+          "event": [
+            { "listen": "prerequest", "script": { "type": "text/javascript", "exec": [
+              "pm.collectionVariables.set('studentEmail', `student${Date.now()}@example.com`);"
+            ] } },
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('201 Created', () => pm.response.to.have.status(201));",
+              "const { student } = pm.response.json().data;",
+              "pm.test('Returns the created student', () => {",
+              "  pm.expect(student).to.include.keys('id', 'name', 'email', 'age', 'created_at');",
+              "  pm.expect(student.age).to.eql(21);",
+              "});",
+              "pm.collectionVariables.set('studentId', student.id);"
+            ] } }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Ali Khan\",\n  \"email\": \"{{studentEmail}}\",\n  \"age\": 21\n}" },
+            "url": "{{baseUrl}}/students"
+          }
+        },
+        {
+          "name": "Create student - duplicate email (409)",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('409 Conflict', () => pm.response.to.have.status(409));"
+          ] } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Another Student\",\n  \"email\": \"{{studentEmail}}\",\n  \"age\": 22\n}" },
+            "url": "{{baseUrl}}/students"
+          }
+        },
+        {
+          "name": "Create student - validation errors (400)",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('400 Bad Request', () => pm.response.to.have.status(400));",
+            "pm.test('Lists field errors', () => pm.expect(pm.response.json().errors).to.have.lengthOf(3));"
+          ] } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"A\",\n  \"email\": \"invalid\",\n  \"age\": 200\n}" },
+            "url": "{{baseUrl}}/students"
+          }
+        },
+        {
+          "name": "Get all students",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const { data } = pm.response.json();",
+            "pm.test('Returns an array with a count', () => {",
+            "  pm.expect(data.students).to.be.an('array');",
+            "  pm.expect(data.count).to.eql(data.students.length);",
+            "});"
+          ] } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/students" }
+        },
+        {
+          "name": "Get student by ID",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "pm.test('Returns the right student', () => pm.expect(pm.response.json().data.student.id).to.eql(Number(pm.collectionVariables.get('studentId'))));"
+          ] } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/students/{{studentId}}" }
+        },
+        {
+          "name": "Get student by ID - not found (404)",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('404 Not Found', () => pm.response.to.have.status(404));"
+          ] } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/students/999999" }
+        },
+        {
+          "name": "Get student by ID - invalid id (400)",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('400 Bad Request', () => pm.response.to.have.status(400));"
+          ] } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/students/abc" }
+        },
+        {
+          "name": "Update student",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "const { student } = pm.response.json().data;",
+            "pm.test('Fields were updated', () => {",
+            "  pm.expect(student.name).to.eql('Ali Khan Updated');",
+            "  pm.expect(student.age).to.eql(22);",
+            "});"
+          ] } }],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Ali Khan Updated\",\n  \"email\": \"{{studentEmail}}\",\n  \"age\": 22\n}" },
+            "url": "{{baseUrl}}/students/{{studentId}}"
+          }
+        },
+        {
+          "name": "Update student - not found (404)",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('404 Not Found', () => pm.response.to.have.status(404));"
+          ] } }],
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"name\": \"Nobody\",\n  \"email\": \"nobody@example.com\",\n  \"age\": 30\n}" },
+            "url": "{{baseUrl}}/students/999999"
+          }
+        },
+        {
+          "name": "Delete student",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));"
+          ] } }],
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/students/{{studentId}}" }
+        },
+        {
+          "name": "Delete student - already deleted (404)",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('404 Not Found', () => pm.response.to.have.status(404));"
+          ] } }],
+          "request": { "method": "DELETE", "url": "{{baseUrl}}/students/{{studentId}}" }
+        }
+      ]
+    },
+    {
+      "name": "Session (refresh tokens)",
+      "item": [
+        {
+          "name": "Refresh session",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "pm.test('Issues a NEW refresh token (rotation)', () => {",
+            "  pm.expect(pm.cookies.has('refresh_token')).to.be.true;",
+            "  pm.expect(pm.cookies.get('refresh_token')).to.not.eql(pm.collectionVariables.get('oldRefreshToken'));",
+            "});"
+          ] } }],
+          "request": { "method": "POST", "url": "{{baseUrl}}/auth/refresh" }
+        },
+        {
+          "name": "Get current user after refresh",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK with the new access token', () => pm.response.to.have.status(200));"
+          ] } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/auth/me" }
+        },
+        {
+          "name": "Refresh - no cookie (401)",
+          "protocolProfileBehavior": { "disableCookies": true },
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"
+          ] } }],
+          "request": { "method": "POST", "url": "{{baseUrl}}/auth/refresh" }
+        },
+        {
+          "name": "Refresh - reuse old refresh token: theft detected (401)",
+          "protocolProfileBehavior": { "disableCookies": true },
+          "event": [
+            { "listen": "prerequest", "script": { "type": "text/javascript", "exec": [
+              "// Wait past the grace period so this counts as reuse, not two tabs refreshing at once.",
+              "setTimeout(() => {}, Number(pm.collectionVariables.get('reuseWaitMs')));"
+            ] } },
+            { "listen": "test", "script": { "type": "text/javascript", "exec": [
+              "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));",
+              "pm.test('Reports that all sessions were revoked', () => pm.expect(pm.response.json().message).to.include('logged out of all devices'));"
+            ] } }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Cookie", "value": "refresh_token={{oldRefreshToken}}" }],
+            "url": "{{baseUrl}}/auth/refresh"
+          }
+        },
+        {
+          "name": "Refresh with current token after theft detection (401)",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('401: the legitimate session was revoked too', () => pm.response.to.have.status(401));"
+          ] } }],
+          "request": { "method": "POST", "url": "{{baseUrl}}/auth/refresh" }
+        }
+      ]
+    },
+    {
+      "name": "Logout",
+      "item": [
+        {
+          "name": "Login again",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));"
+          ] } }],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "body": { "mode": "raw", "raw": "{\n  \"email\": \"{{userEmail}}\",\n  \"password\": \"{{userPassword}}\"\n}" },
+            "url": "{{baseUrl}}/auth/login"
+          }
+        },
+        {
+          "name": "Logout",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('200 OK', () => pm.response.to.have.status(200));",
+            "pm.test('Cookies are cleared', () => {",
+            "  pm.expect(pm.cookies.has('access_token')).to.be.false;",
+            "  pm.expect(pm.cookies.has('refresh_token')).to.be.false;",
+            "});"
+          ] } }],
+          "request": { "method": "POST", "url": "{{baseUrl}}/auth/logout" }
+        },
+        {
+          "name": "Get students after logout (401)",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"
+          ] } }],
+          "request": { "method": "GET", "url": "{{baseUrl}}/students" }
+        },
+        {
+          "name": "Refresh after logout (401)",
+          "event": [{ "listen": "test", "script": { "type": "text/javascript", "exec": [
+            "pm.test('401 Unauthorized', () => pm.response.to.have.status(401));"
+          ] } }],
+          "request": { "method": "POST", "url": "{{baseUrl}}/auth/refresh" }
+        }
+      ]
+    }
+  ]
+}
